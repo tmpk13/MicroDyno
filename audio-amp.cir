@@ -1,0 +1,159 @@
+* ===========================================================
+* BSS138 Common-Source Audio Amplifier
+* nRF52 PWM -> RC filter -> gate coupling -> CS amp
+*
+* Supply:   VDD = 3.3 V
+* Input:    PWM from nRF52 (modelled as 1 kHz sine, DC mid-rail)
+* RC LPF:   Rf=1k, Cf=10n  -> fc ≈ 16 kHz  (kills PWM carrier)
+* Bias:     R1=100k, R2=82k -> VG ≈ 1.49 V
+* At ID_Q ≈ 5 mA: VS = 165 mV, VGS ≈ 1.32 V, VD = 1.65 V
+* Gain:     Av ≈ -gm*RD / (1+gm*Rs) ≈ -7..9 (depends on gm)
+* Output:   Cblock=100u -> 8Ω speaker, fc_hp ≈ 200 Hz
+* ===========================================================
+
+.title BSS138 Audio Amplifier
+
+* -----------------------------------------------------------
+* SUPPLY
+* -----------------------------------------------------------
+VREG VDD GND DC 3.3
+
+* -----------------------------------------------------------
+* INPUT SOURCE
+* Represents nRF52 PWM filtered output:
+*   DC offset = 1.65 V (50% duty cycle equivalent)
+*   AC peak   = 1.5 V  (full-swing audio modulation)
+*   Freq      = 1 kHz  (audio test tone)
+* A 100 mV audio tone is realistic (≈±3% PWM duty-cycle swing at 3.3 V).
+* Larger amplitudes drive VGS below threshold (cut-off) or into hard
+* saturation; for full-swing testing increase and observe clipping.
+* -----------------------------------------------------------
+* AC 1 enables frequency-domain analysis; SIN drives transient
+VPWM IN GND DC 1.65 AC 1 SIN(1.65 100m 1k 0 0)
+
+* -----------------------------------------------------------
+* RC LOW-PASS FILTER  (fc = 1/(2*pi*Rf*Cf) ≈ 15.9 kHz)
+* Attenuates PWM switching carrier, passes audio band
+* -----------------------------------------------------------
+Rf  IN   FILT  1k
+Cf  FILT GND   10n
+
+* -----------------------------------------------------------
+* GATE BIAS DIVIDER
+*   R1 (VDD -> GBIAS): 100 kΩ
+*   R2 (GBIAS -> GND): 82 kΩ
+*   VG = 3.3 * 82/182 ≈ 1.487 V
+* -----------------------------------------------------------
+R1  VDD   GBIAS  100k
+R2  GBIAS GND    82k
+
+* -----------------------------------------------------------
+* AC COUPLING  (blocks DC from RC filter, lets audio through)
+*   Cac=1u: fc_hp = 1/(2*pi*Cac*(R1||R2)) ≈ 4 Hz -> fine
+*   IC: V(FILT)_dc - V(GBIAS)_dc = 1.65 - 1.487 = 0.163 V
+*   Without IC, τ = Cac*(R1||R2) = 45 ms dwarfs a 10 ms transient.
+* -----------------------------------------------------------
+Cac FILT GBIAS 1u IC=0.163
+
+* -----------------------------------------------------------
+* BSS138  N-Channel MOSFET  (common-source)
+*   Mdrain Mgate Msource Mbody ModelName  W= L=
+* -----------------------------------------------------------
+M1  DRAIN GBIAS SOURCE GND BSS138 W=1u L=1u
+
+* -----------------------------------------------------------
+* DRAIN LOAD  (RD sets quiescent VD = VDD - ID*RD)
+*   330 Ω -> VD_Q = 3.3 - 5mA*330 = 1.65 V (mid-rail)
+* -----------------------------------------------------------
+RD  VDD   DRAIN  330
+
+* -----------------------------------------------------------
+* SOURCE DEGENERATION  (stabilises bias, reduces gain slightly)
+*   Rs = 33 Ω -> VS_Q = 5mA*33 = 165 mV
+* -----------------------------------------------------------
+Rs  SOURCE GND    33
+
+* -----------------------------------------------------------
+* OUTPUT BLOCKING CAPACITOR
+*   Cblock=100u with RL=8Ω: fc_hp = 1/(2*pi*100u*8) ≈ 199 Hz
+*   Use 470u to extend to ≈ 42 Hz if needed.
+*   IC = V(DRAIN)_Q = 1.679 V  (DC drain voltage; keeps OUT at 0 V DC)
+* -----------------------------------------------------------
+Cblock DRAIN OUT 100u IC=1.679
+
+* -----------------------------------------------------------
+* LOAD  (8 Ω speaker)
+* -----------------------------------------------------------
+RL  OUT   GND    8
+
+* ===========================================================
+* BSS138 SPICE MODEL  (N-Channel, 50 V, 200 mA)
+* Parameters derived from Diodes Inc datasheet:
+*   Vth(typ) = 1.0 V, ID(on) @ VGS=2.5V typ ≥ 30 mA
+*   Ciss ≈ 37 pF, Crss ≈ 12 pF  (VDS=25V, f=1MHz)
+* ===========================================================
+* kp is fitted to match BSS138 ID vs VGS behaviour (not process µCox):
+*   target ID=5mA at VGS=1.32V, VTO=1.0V
+*   kp = 2*ID / (VGS-VTO)^2 = 2*5m / 0.32^2 ≈ 97.7mA  (W=L=1u, so W/L=1)
+* Gate capacitances (Ciss≈37pF, Crss≈12pF) omitted — negligible at audio freq.
+.model BSS138 NMOS
++ level  = 1
++ vto    = 1.0
++ kp     = 97.7m
++ lambda = 0.02
++ gamma  = 0
++ phi    = 0.7
++ rd     = 2.5
++ rs     = 2.5
+
+* ===========================================================
+* ANALYSES
+* ===========================================================
+
+* 1. DC operating point
+.op
+
+* 2. Transient: 10 ms — captures ~10 cycles of 1 kHz test tone
+*    UIC uses IC= values on caps so startup is instant (no 45 ms Cac ramp)
+.tran 1u 10m UIC
+
+* 3. AC sweep: 10 Hz – 200 kHz, 100 pts/decade
+*    Check audio bandwidth and RC filter roll-off
+.ac dec 100 10 200k
+
+* ===========================================================
+* MEASUREMENTS  (evaluated after .tran)
+* ===========================================================
+.measure tran VG_DC    avg v(GBIAS)
+.measure tran VD_DC    avg v(DRAIN)
+.measure tran VS_DC    avg v(SOURCE)
+.measure tran VOUT_pk  max v(OUT)
+.measure tran VOUT_vly min v(OUT)
+
+* Batch-friendly frequency response: all key nodes
+.print ac vdb(in) vdb(filt) vdb(gbias) vdb(drain) vdb(out) vp(out)
+
+* ===========================================================
+* INTERACTIVE CONTROL SCRIPT
+* ===========================================================
+.control
+  run
+
+  * -- Operating point --
+  setplot op1
+  print v(gbias) v(drain) v(source) @M1[id]
+
+  * -- Transient (interactive only) --
+  setplot tran1
+  plot v(filt) v(gbias)             title "RC filter output and gate bias"
+  plot v(drain) v(source) v(out)    title "Amp nodes: drain / source / output"
+
+  * -- Frequency response (must setplot ac1 first) --
+  setplot ac1
+  plot db(v(out)/v(filt))           title "Gain FILT->OUT (dB)"
+  plot db(v(out)/v(in))             title "Gain IN->OUT (dB)"
+  plot 180/pi*ph(v(out)/v(filt))    title "Phase FILT->OUT (deg)"
+
+.endc
+
+.end

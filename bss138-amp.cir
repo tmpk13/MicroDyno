@@ -1,0 +1,51 @@
+BSS138 Common-Source Audio Amplifier
+* 3.3V supply, nRF52 PWM audio driver
+* ----------------------------------------
+* Bias: R1=1M, R2=470k -> Vg_bias ~ 1.056V
+* RC filter: Rf=1k, Cf=10n  (fc ~ 16kHz PWM demod)
+* Gate coupling: Cac=1uF
+* Drain load: RD=1k
+* Source degen: Rs=33 ohm
+* Output: Cblock=220uF -> 8 ohm speaker  (fc ~ 90Hz)
+
+* --- Power supply ---
+VREG VDD 0 3.3
+
+* --- PWM audio source ---
+* AC 1 for AC sweep; SIN for transient (100mV pk, 1kHz)
+Vaudio PWM_IN 0 AC 1 SIN(0 0.1 1000)
+
+* --- PWM demod RC filter ---
+Rf  PWM_IN FILT  1k
+Cf  FILT   0     10n
+
+* --- Bias divider connected directly to gate node ---
+R1  VDD   GATE  1MEG
+R2  GATE  0     470k
+
+* --- AC gate coupling (audio signal rides on top of DC bias) ---
+Cac  FILT  GATE  1u
+
+* --- BSS138 common-source ---
+* M<name> Drain Gate Source Bulk Model
+M1  DRAIN  GATE  SOURCE  0  BSS138  W=1u  L=1u
+
+* --- Drain load ---
+RD  VDD  DRAIN  1k
+
+* --- Source degeneration ---
+Rs  SOURCE  0  33
+
+* --- Output coupling ---
+Cblock  DRAIN  OUT  220u
+
+* --- Speaker (resistive model) ---
+Rspk  OUT  0  8
+
+* ----------------------------------------
+* BSS138 NMOS Level-1 model
+* Calibrated: ~200mA at VGS=4.5V, VTO=0.8V (W/L=1)
+* ID = (KP/2)*(W/L)*(VGS-VTO)^2
+.MODEL BSS138 NMOS (LEVEL=1 VTO=0.8 KP=0.03 LAMBDA=0.01 GAMMA=0 PHI=0.6)
+
+.end
